@@ -5,43 +5,7 @@ def NearestNeigthborInterpolation(x, y, image):
     i = math.floor((x - image.Origin[0] ) / image.Spacing[0] + 0.5 )
     j = math.floor((y - image.Origin[1] ) / image.Spacing[1] + 0.5 )
     val = image.Values[int(i), int(j)]
-    return val
-
-def bi(x, y, image):    
-    i1 = math.floor((x - image.Origin[0] ) / image.Spacing[0])
-    x1 = i1 * image.Spacing[0] + image.Origin[0]
-    i2 = i1 + 1
-    x2 = i2 * image.Spacing[0] + image.Origin[0]
-    j1 = math.floor((y - image.Origin[1] ) / image.Spacing[1])
-    y1 = j1 * image.Spacing[1] + image.Origin[1]
-    j2 = j1 + 1
-    y2 = j2 * image.Spacing[1] + image.Origin[1]
-    if i1 >= image.Values.shape[0]:
-        i1 = image.Values.shape[0] - 1
-    if i2 >= image.Values.shape[0]:
-        i2 = image.Values.shape[0] - 1
-    if j1 >= image.Values.shape[1]:
-        j1 = image.Values.shape[1] - 1
-    if j2 >= image.Values.shape[1]:
-        j2 = image.Values.shape[1] - 1
-    
-    #print("X: {0}, X1: {1}, X2: {2}".format(x, x1, x2))
-    #print("Y: {0}, Y1: {1}, Y2: {2}".format(y, y1, y2))
-    #print("I1: {0}, I2: {1}".format(i1, i2))
-    #print("J1: {0}, J2: {1}".format(j1, j2))
-    #print("xShape: {0}, yShape: {1}".format(image.Values.shape[0], image.Values.shape[1]))
-    f11 = image.Values[i1, j1]
-    f12 = image.Values[i1, j2]
-    f21 = image.Values[i2, j1]
-    f22 = image.Values[i2, j2]
-    #print("V_i1j1: {0}, V_i1j2: {1}, V_i2j1 : {2}, V_i1j2: {3}".format(f11, f12, f21, f22))
-    Q = np.array([[f11, f12], [f21, f22]], dtype=float)
-    xdiff = np.array([x2-x, x-x1], dtype=float)
-    ydiff = np.array([y2-y, y-y1], dtype=float)
-    fxy = 1/((x2 - x1)*(y2-y1)) * xdiff.dot(Q).dot(ydiff)
-    #if fxy == np.Inf:
-    #    print("ERROR: fxy:{0},x2:{1},x1:{2},y2:{3},y1:{4},i1:{5},i2:{6},j1:{7},j2:{8},x:{9},y:{10}".format(fxy, x2, x1, y2, y1, i1, i2, j1, j2, x, y))    
-    return fxy    
+    return val  
 
 def BilinearInterpolate(x, y, image):
     i1 = math.floor((x - image.Origin[0] ) / image.Spacing[0])
@@ -84,33 +48,96 @@ def getExtremeValues(image):
     minX = image.Origin[0]
     minY = image.Origin[1]
     maxX = minX + pixelsX * image.Spacing[0] - 1
-    maxY = minY + pixelsY * image.Spacing[1] - 1
-    #print("MinX: {0}".format(minY))
-    #print("MinY: {0}".format(minX))
-    #print("MaxX: {0}".format(maxX))
-    #print("MaxY: {0}".format(maxY))
+    maxY = minY + pixelsY * image.Spacing[1] - 1    
     return minX, minY, maxX, maxY
 
-def Transform(image, refImg, T, nullFill = True):        
+def Transform(B, A, T, nullFill = True):
+    """Transform image B into image A cordinate system using affine transformation matrix T.
+    Input:
+        A - Reference image of type Image
+        B - Moving Image of type Image
+        T - [3x3] Affine transformation matrix
+    Output: 
+        Image A' transformed into Bs cordinate system.
+    """  
     invT = np.linalg.inv(T) ## TODO change to own inverse transform
     
     if not nullFill:
-        tImg = np.zeros(refImg.Values.shape, dtype=float) # TODO how should it be initilized
+        tImg = np.zeros(A.Values.shape, dtype=float) # TODO how should it be initilized
     else:    
-        tImg = np.full(refImg.Values.shape, None, dtype=float) # TODO how should it be initilized    
-    (minX, minY, maxX, maxY) = getExtremeValues(image)
+        tImg = np.full(A.Values.shape, None, dtype=float) # TODO how should it be initilized    
+    (minX, minY, maxX, maxY) = getExtremeValues(B)
     for i in range(tImg.shape[0]):
         for j in range(tImg.shape[1]):
-            x = i * refImg.Spacing[0] + refImg.Origin[0]
-            y = j * refImg.Spacing[1] + refImg.Origin[1]
+            x = i * A.Spacing[0] + A.Origin[0]
+            y = j * A.Spacing[1] + A.Origin[1]
             pos = np.dot(invT, np.array([x,y,1], dtype=float, copy=True))
             #print("x: {0}, y:{1}, T: {2}".format(x,y, invT))
             #print(pos)
             if not (minX <= pos[0] <= maxX and minY <= pos[1] <= maxY):                
                 continue            
-            val = BilinearInterpolate(pos[0], pos[1], image)
+            val = BilinearInterpolate(pos[0], pos[1], B)
             tImg[i,j] = val
-    return Image(tImg, refImg.Spacing, refImg.Origin)
+    return Image(tImg, A.Spacing, A.Origin)
+
+# MSE
+def MSE_residual(A, B):
+    """Calculate the residual for the intensity values in image A and B on domain A
+    Input:
+        A - Reference image of type Image
+        B - Moving Image of type Image
+    Output: 
+        an array with the residual values
+    """
+    residual = []
+    for i in range(A.Values.shape[0]):
+        for j in range(A.Values.shape[1]):
+            if A.Values[i,j] != A.Values[i,j]: # Null check                
+                continue                
+            x = i * A.Spacing[0] + A.Origin[0]
+            y = j * A.Spacing[1] + A.Origin[1]            
+            f_r = BilinearInterpolate(x=x, y=y, image=B)
+            residual.append(A.Values[i,j] - f_r)
+    return np.array([residual], dtype=float).T
+
+def MSE_cost(residual):
+    """Calculate the mean square error (MSE) between intensity values of image A and B
+    Input:
+        residual - the residual in every point of the given domain (Ai - Bi)
+    Output: 
+        the cost
+    """
+    return np.sum(residual**2)/residual.size
+
+# Normalized Cross correlation
+def NCC(A, B):
+    """Calculate Normalized Cross Correlation between to images A and B using Fast Fourier Transform
+    Input:
+        A - Reference image of type Image
+        B - Moving Image of type Image
+    Output: 
+        (ncc, idxY, idxX, x, y)
+        ncc - Normalized cross correlation
+        i - index in Refrence image x-direction where the highest NCC appears
+        j - index in Refrence image y-direction where the highest NCC appears
+        x - x value in Refrence image where the highest NCC appears
+        y - y value in Refrence image where the highest NCC appears
+    """
+    assert np.abs(np.mean(A.Values)) < 1e-10 # Assert mean has already been removed
+    assert np.abs(np.mean(B.Values)) < 1e-10
+
+    padWidthX = int((B.Values.shape[1]-1)/2)
+    padWidthY = int((B.Values.shape[0]-1)/2)
+    gPad = np.pad(A.Values, [(padWidthY, ), (padWidthX, )], mode='constant')
+    G = np.fft.fft2(gPad)
+    F = np.fft.fft2(B.Values, G.shape)    
+    FG = np.conjugate(F)*G
+    ncc = np.real(np.fft.ifft2(FG))
+    j, i = np.unravel_index(np.argmax(ncc), ncc.shape)  # find the match
+    x = i * A.Spacing[0] + A.Origin[0]
+    y = j * A.Spacing[1] + A.Origin[1]
+    return ncc, i, j, x, y
+
 
 class Image:
     def __init__(self, values, spacing, origin):
